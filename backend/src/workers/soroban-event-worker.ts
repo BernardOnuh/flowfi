@@ -312,10 +312,12 @@ export class SorobanEventWorker {
     const ratePerSecond = decodeI128(body['rate_per_second']);
     const depositedAmount = decodeI128(body['deposited_amount']);
     const startTime = Number(decodeU64(body['start_time']));
-    
-    // Compute expected end time (assuming no pauses yet)
-    const durationSeconds = Number(BigInt(depositedAmount) / BigInt(ratePerSecond));
-    const endTime = startTime + durationSeconds;
+
+    const ratePerSecondBigInt = BigInt(ratePerSecond);
+    const endTime =
+      ratePerSecondBigInt === 0n
+        ? null
+        : startTime + Number(BigInt(depositedAmount) / ratePerSecondBigInt);
 
     await prisma.$transaction(async (tx: any) => {
       await tx.user.upsert({
@@ -412,8 +414,13 @@ export class SorobanEventWorker {
         select: { ratePerSecond: true, startTime: true, totalPausedDuration: true }
       });
       
-      const durationSeconds = Number(BigInt(newDepositedAmount) / BigInt(stream.ratePerSecond));
-      const newEndTime = stream.startTime + durationSeconds + stream.totalPausedDuration;
+      const ratePerSecondBigInt = BigInt(stream.ratePerSecond);
+      const newEndTime =
+        ratePerSecondBigInt === 0n
+          ? null
+          : stream.startTime +
+            Number(BigInt(newDepositedAmount) / ratePerSecondBigInt) +
+            stream.totalPausedDuration;
 
       await tx.stream.update({
         where: { streamId },

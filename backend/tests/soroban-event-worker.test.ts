@@ -48,6 +48,7 @@ vi.mock('../src/services/sse.service.js', () => ({
   sseService: {
     broadcastToStream: vi.fn(),
     broadcast: vi.fn(),
+    broadcastToAdmin: vi.fn(),
   },
 }));
 
@@ -156,6 +157,69 @@ describe('SorobanEventWorker', () => {
       expect(logger.warn).toHaveBeenCalledWith(
         expect.stringContaining('Duplicate StreamEvent skipped')
       );
+    });
+
+    it('should persist a zero-rate stream_created event without throwing', async () => {
+      const txHash = 'zero-rate-tx-hash';
+      const streamId = 77;
+
+      const mockEvent: rpc.Api.EventResponse = {
+        id: 'zero-rate-event-1',
+        type: 'contract',
+        ledger: 2000,
+        ledgerClosedAt: '2024-06-01T00:00:00Z',
+        txHash,
+        transactionIndex: 0,
+        operationIndex: 0,
+        inSuccessfulContractCall: true,
+        topic: [
+          { switch: () => ({ value: 0 }), sym: () => 'stream_created' } as any,
+          { switch: () => ({ value: 1 }), u64: () => ({ toString: () => streamId.toString() }) } as any,
+        ],
+        value: {
+          switch: () => ({ value: 4 }),
+          map: () => [
+            { key: () => ({ sym: () => 'sender' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
+            { key: () => ({ sym: () => 'recipient' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
+            { key: () => ({ sym: () => 'token_address' }), val: () => ({ address: () => ({ switch: () => ({ value: 1 }), contractId: () => Buffer.alloc(32) }) }) },
+            // rate_per_second = 0 (hi=0, lo=0)
+            { key: () => ({ sym: () => 'rate_per_second' }), val: () => ({ i128: () => ({ hi: () => ({ toString: () => '0' }), lo: () => ({ toString: () => '0' }) }) }) },
+            { key: () => ({ sym: () => 'deposited_amount' }), val: () => ({ i128: () => ({ hi: () => ({ toString: () => '0' }), lo: () => ({ toString: () => '500' }) }) }) },
+            { key: () => ({ sym: () => 'start_time' }), val: () => ({ u64: () => ({ toString: () => '1700000000' }) }) },
+          ] as any,
+        } as any,
+      };
+
+      let capturedStreamUpsert: any = null;
+      const mockTx = {
+        user: { upsert: vi.fn().mockResolvedValue({}) },
+        stream: {
+          upsert: vi.fn().mockImplementation((args) => {
+            capturedStreamUpsert = args;
+            return Promise.resolve({ streamId, isActive: true });
+          }),
+        },
+        streamEvent: {
+          findUnique: vi.fn().mockResolvedValue(null),
+          upsert: vi.fn().mockResolvedValue({ id: 'event-zero-rate' }),
+        },
+      };
+
+      (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx));
+
+      // Must not throw
+      await expect(
+        (worker as any).handleStreamCreated(mockEvent, mockEvent.topic![1])
+      ).resolves.not.toThrow();
+
+      // Stream was persisted
+      expect(mockTx.stream.upsert).toHaveBeenCalledTimes(1);
+
+      // endTime must be null — never computed via division
+      expect(capturedStreamUpsert?.create?.endTime).toBeNull();
+
+      // StreamEvent row was also persisted
+      expect(mockTx.streamEvent.upsert).toHaveBeenCalledTimes(1);
     });
 
     it('should handle duplicate fee collection events', async () => {
