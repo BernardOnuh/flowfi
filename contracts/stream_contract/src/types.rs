@@ -1,5 +1,3 @@
-
-
 use soroban_sdk::{contracttype, Address};
 
 /// Status of a payment stream.
@@ -55,10 +53,6 @@ pub struct Stream {
     /// `false` once fully withdrawn or cancelled.
     pub is_active: bool,
     /// `true` while the stream is paused; accrual is frozen at `paused_at`.
-    pub paused: bool,
-    /// Ledger timestamp at which the stream was paused (0 when not paused).
-    pub paused_at: u64,
-    /// `true` when the stream is paused by the sender.
     pub paused: bool,
     /// Ledger timestamp when the stream was paused, `None` if not paused.
     pub paused_at: Option<u64>,

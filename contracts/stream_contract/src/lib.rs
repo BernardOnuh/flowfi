@@ -231,7 +231,6 @@ impl StreamContract {
                 last_update_time: start_time,
                 is_active: true,
                 paused: false,
-                paused_at: 0,
                 paused_at: None,
                 status: StreamStatus::Active,
             },
@@ -309,97 +308,6 @@ impl StreamContract {
         Ok(())
     }
 
-    // ─── Stream Pause / Resume ────────────────────────────────────────────────
-
-    /// Pause an active stream, freezing accrual at the current ledger time.
-    ///
-    /// Only the stream's sender may pause their own stream.
-    ///
-    /// # Errors
-    /// - `StreamNotFound`  — no stream exists with `stream_id`.
-    /// - `Unauthorized`    — caller is not the stream's sender.
-    /// - `StreamInactive`  — stream is already inactive.
-    pub fn pause_stream(
-        env: Env,
-        sender: Address,
-        stream_id: u64,
-    ) -> Result<(), StreamError> {
-        sender.require_auth();
-
-        let mut stream = load_stream(&env, stream_id)?;
-
-        if stream.sender != sender {
-            return Err(StreamError::Unauthorized);
-        }
-        if !stream.is_active {
-            return Err(StreamError::StreamInactive);
-        }
-
-        let now = env.ledger().timestamp();
-        stream.paused = true;
-        stream.paused_at = now;
-
-        save_stream(&env, stream_id, &stream);
-
-        env.events().publish(
-            (Symbol::new(&env, "stream_paused"), stream_id),
-            StreamPausedEvent {
-                stream_id,
-                sender,
-                paused_at: now,
-            },
-        );
-
-        Ok(())
-    }
-
-    /// Resume a paused stream, adjusting `last_update_time` so that the
-    /// pause interval is not counted as streamed time.
-    ///
-    /// Only the stream's sender may resume their own stream.
-    ///
-    /// # Errors
-    /// - `StreamNotFound`  — no stream exists with `stream_id`.
-    /// - `Unauthorized`    — caller is not the stream's sender.
-    /// - `StreamInactive`  — stream is already inactive.
-    pub fn resume_stream(
-        env: Env,
-        sender: Address,
-        stream_id: u64,
-    ) -> Result<(), StreamError> {
-        sender.require_auth();
-
-        let mut stream = load_stream(&env, stream_id)?;
-
-        if stream.sender != sender {
-            return Err(StreamError::Unauthorized);
-        }
-        if !stream.is_active {
-            return Err(StreamError::StreamInactive);
-        }
-
-        let now = env.ledger().timestamp();
-        // Shift last_update_time forward by the duration of the pause so that
-        // the pause window is excluded from accrual calculations.
-        let pause_duration = now.saturating_sub(stream.paused_at);
-        stream.last_update_time = stream.last_update_time.saturating_add(pause_duration);
-        stream.paused = false;
-        stream.paused_at = 0;
-
-        save_stream(&env, stream_id, &stream);
-
-        env.events().publish(
-            (Symbol::new(&env, "stream_resumed"), stream_id),
-            StreamResumedEvent {
-                stream_id,
-                sender,
-                resumed_at: now,
-            },
-        );
-
-        Ok(())
-    }
-
     // ─── Internal Helpers ─────────────────────────────────────────────────────
 
     /// Ensures the supplied token address implements the Soroban token interface.
@@ -426,28 +334,20 @@ impl StreamContract {
     /// - Overflow boundary: i128::MAX (~1.7e19) for both rate and duration
     fn calculate_claimable(stream: &Stream, now: u64) -> i128 {
         // When the stream is paused, accrue only up to the moment it was paused.
-        let effective_now = if stream.paused && stream.paused_at < now {
-            stream.paused_at
-        } else {
-            now
-        };
-
-        let elapsed = effective_now.saturating_sub(stream.last_update_time);
         let effective_now = if stream.paused {
             stream.paused_at.unwrap_or(stream.last_update_time)
         } else {
             now
         };
+
         let elapsed = effective_now.saturating_sub(stream.last_update_time);
 
         // Use checked_sub for deposited - withdrawn calculation
-        let remaining = match stream
+        // Underflow (withdrawn > deposited) falls back to 0.
+        let remaining = stream
             .deposited_amount
             .checked_sub(stream.withdrawn_amount)
-        {
-            Some(result) => result,
-            None => 0, // Underflow: already withdrawn more than deposited
-        };
+            .unwrap_or_default();
 
         // Use checked_mul to prevent overflow when multiplying rate * elapsed.
         // If overflow would occur, cap at the remaining balance.
@@ -464,10 +364,7 @@ impl StreamContract {
     /// # Errors
     /// - `StreamNotFound` — no stream exists with `stream_id`.
     /// - `Unauthorized` — caller is not the stream's sender.
-    fn validate_stream_ownership(
-        stream: &Stream,
-        caller: &Address,
-    ) -> Result<(), StreamError> {
+    fn validate_stream_ownership(stream: &Stream, caller: &Address) -> Result<(), StreamError> {
         if stream.sender != *caller {
             return Err(StreamError::Unauthorized);
         }
@@ -530,7 +427,7 @@ impl StreamContract {
         if stream.recipient != recipient {
             return Err(StreamError::Unauthorized);
         }
-        
+
         // Validate stream is active and not paused
         Self::validate_stream_active(&stream)?;
         if stream.paused {
@@ -668,7 +565,11 @@ impl StreamContract {
 
         env.events().publish(
             (Symbol::new(&env, "stream_paused"), stream_id),
-            StreamPausedEvent { stream_id, sender, paused_at: now },
+            StreamPausedEvent {
+                stream_id,
+                sender,
+                paused_at: now,
+            },
         );
 
         Ok(())
@@ -701,7 +602,9 @@ impl StreamContract {
         // Advance last_update_time by pause duration so accrual resumes from now.
         stream.last_update_time = stream.last_update_time.saturating_add(pause_duration);
         // new_end_time represents when the stream will fully drain from now.
-        let remaining = stream.deposited_amount.saturating_sub(stream.withdrawn_amount);
+        let remaining = stream
+            .deposited_amount
+            .saturating_sub(stream.withdrawn_amount);
         let new_end_time = if stream.rate_per_second > 0 {
             now + (remaining / stream.rate_per_second) as u64
         } else {
@@ -715,7 +618,11 @@ impl StreamContract {
 
         env.events().publish(
             (Symbol::new(&env, "stream_resumed"), stream_id),
-            StreamResumedEvent { stream_id, sender, new_end_time },
+            StreamResumedEvent {
+                stream_id,
+                sender,
+                new_end_time,
+            },
         );
 
         Ok(new_end_time)

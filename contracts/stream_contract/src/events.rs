@@ -119,10 +119,6 @@ pub struct StreamPausedEvent {
     pub paused_at: u64,
 }
 
-/// Emitted when a stream is resumed after being paused.
-    pub paused_at: u64,
-}
-
 /// Emitted when a sender resumes a paused stream.
 ///
 /// Topic: `("stream_resumed", stream_id)`
@@ -131,8 +127,7 @@ pub struct StreamPausedEvent {
 pub struct StreamResumedEvent {
     pub stream_id: u64,
     pub sender: Address,
-    /// Ledger timestamp at which streaming resumed.
-    pub resumed_at: u64,
+    /// Recomputed ledger timestamp at which the stream will fully drain.
     pub new_end_time: u64,
 }
 

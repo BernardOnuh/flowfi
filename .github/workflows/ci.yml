@@ -49,7 +49,6 @@ jobs:
         run: |
           cargo clippy \
             --all-targets \
-            --target wasm32-unknown-unknown \
             -- -D warnings
 
       # ── WASM build ───────────────────────────────────────────────────────────

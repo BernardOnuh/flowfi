@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 extern crate std;
 
 use super::*;
@@ -70,7 +68,6 @@ fn test_datakey_stream_serializes_deterministically() {
         last_update_time: 1,
         is_active: true,
         paused: false,
-        paused_at: 0,
         paused_at: None,
         status: StreamStatus::Active,
     };
@@ -203,8 +200,7 @@ fn test_initialize_emits_event() {
         })
         .expect("initialized event not found");
 
-    let payload: InitializedEvent =
-        InitializedEvent::try_from_val(&env, &ev.2).unwrap();
+    let payload: InitializedEvent = InitializedEvent::try_from_val(&env, &ev.2).unwrap();
     assert_eq!(payload.admin, admin);
     assert_eq!(payload.treasury, treasury);
     assert_eq!(payload.fee_rate_bps, 100);
@@ -232,8 +228,7 @@ fn test_update_fee_config_emits_event() {
         })
         .expect("fee_config_updated event not found");
 
-    let payload: FeeConfigUpdatedEvent =
-        FeeConfigUpdatedEvent::try_from_val(&env, &ev.2).unwrap();
+    let payload: FeeConfigUpdatedEvent = FeeConfigUpdatedEvent::try_from_val(&env, &ev.2).unwrap();
     assert_eq!(payload.admin, admin);
     assert_eq!(payload.old_treasury, old_treasury);
     assert_eq!(payload.new_treasury, new_treasury);
@@ -1028,7 +1023,9 @@ fn test_claimable_max_i128_rate_overflow() {
     let mut stream = client.get_stream(&stream_id).unwrap();
     stream.rate_per_second = max_rate;
     env.as_contract(&client.address, || {
-        env.storage().persistent().set(&types::DataKey::Stream(stream_id), &stream);
+        env.storage()
+            .persistent()
+            .set(&types::DataKey::Stream(stream_id), &stream);
     });
 
     // Advance time by a large amount that would cause overflow
@@ -1084,11 +1081,17 @@ fn test_create_stream_max_i128_amount() {
     let sender = Address::generate(&env);
     // Use a large but safe amount: 10^18 tokens over 10^9 seconds = 10^9 rate.
     let amount: i128 = 1_000_000_000_000_000_000i128; // 10^18
-    let duration: u64 = 1_000_000_000u64;              // 10^9
+    let duration: u64 = 1_000_000_000u64; // 10^9
     mint(&env, &token, &sender, amount);
 
     let client = create_contract(&env);
-    let id = client.create_stream(&sender, &Address::generate(&env), &token, &amount, &duration);
+    let id = client.create_stream(
+        &sender,
+        &Address::generate(&env),
+        &token,
+        &amount,
+        &duration,
+    );
     let s = client.get_stream(&id).unwrap();
     assert_eq!(s.deposited_amount, amount);
     assert_eq!(s.rate_per_second, 1_000_000_000i128); // 10^18 / 10^9
@@ -1138,13 +1141,7 @@ fn test_create_stream_zero_rate() {
     mint(&env, &token, &sender, 1);
 
     let client = create_contract(&env);
-    let result = client.try_create_stream(
-        &sender,
-        &Address::generate(&env),
-        &token,
-        &1,
-        &1_000,
-    );
+    let result = client.try_create_stream(&sender, &Address::generate(&env), &token, &1, &1_000);
     assert_eq!(result, Err(Ok(StreamError::InvalidRate)));
 }
 
@@ -1766,7 +1763,13 @@ fn test_fuzz_claimable_never_exceeds_remaining() {
         seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
         let amount = 1 + ((seed / 2) % 100_000) as i128;
         seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
-        let duration = 1 + (seed % 10_000) as u64;
+        let duration = 1 + (seed % 10_000);
+
+        // Skip inputs where the rate would round to zero (rejected by the
+        // zero-rate guard); this fuzz test only exercises valid streams.
+        if amount < duration as i128 {
+            continue;
+        }
 
         let sender = Address::generate(&env);
         let recipient = Address::generate(&env);
@@ -1812,12 +1815,16 @@ fn test_fuzz_cancel_early_refunds() {
         let id = client.create_stream(&sender, &recipient, &token, &amount, &10);
 
         seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
-        let partial_time = 1 + (seed % 100) as u64;
+        let partial_time = 1 + (seed % 100);
         env.ledger().with_mut(|l| l.timestamp += partial_time);
 
         client.cancel_stream(&sender, &id);
         let stream = client.get_stream(&id).unwrap();
-        assert!(!stream.is_active, "Iteration {}: stream should be inactive after cancel", iteration);
+        assert!(
+            !stream.is_active,
+            "Iteration {}: stream should be inactive after cancel",
+            iteration
+        );
     }
 }
 
@@ -1832,7 +1839,7 @@ fn test_fuzz_pause_resume_maintains_active_state() {
         seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
         let amount = 100_000 + ((seed / 2) % 100_000) as i128;
         seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
-        let rate = 10 + (seed % 100) as u64;
+        let rate = 10 + (seed % 100);
 
         let sender = Address::generate(&env);
         let recipient = Address::generate(&env);
@@ -1843,7 +1850,7 @@ fn test_fuzz_pause_resume_maintains_active_state() {
 
         for i in 0..3 {
             seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
-            let sleep_time = 10 + (seed % 50) as u64;
+            let sleep_time = 10 + (seed % 50);
             env.ledger().with_mut(|l| l.timestamp += sleep_time);
 
             let stream = client.get_stream(&id).unwrap();
@@ -1855,7 +1862,11 @@ fn test_fuzz_pause_resume_maintains_active_state() {
         }
 
         let stream = client.get_stream(&id).unwrap();
-        assert!(stream.is_active, "Iteration {}: stream should remain active", iteration);
+        assert!(
+            stream.is_active,
+            "Iteration {}: stream should remain active",
+            iteration
+        );
     }
 }
 
@@ -1865,7 +1876,11 @@ fn test_fuzz_large_amount_no_overflow() {
     env.mock_all_auths();
     let (token, _) = create_token(&env);
 
-    let large_amounts = [1_000_000_000_000i128, 10_000_000_000_000i128, 100_000_000_000_000i128];
+    let large_amounts = [
+        1_000_000_000_000i128,
+        10_000_000_000_000i128,
+        100_000_000_000_000i128,
+    ];
 
     for amount in large_amounts.iter() {
         let sender = Address::generate(&env);
@@ -1998,10 +2013,7 @@ fn test_transfer_admin_rejects_not_initialized() {
     env.mock_all_auths();
     let client = create_contract(&env);
 
-    let result = client.try_transfer_admin(
-        &Address::generate(&env),
-        &Address::generate(&env),
-    );
+    let result = client.try_transfer_admin(&Address::generate(&env), &Address::generate(&env));
     assert_eq!(result, Err(Ok(StreamError::NotInitialized)));
 }
 
@@ -2053,8 +2065,7 @@ fn test_transfer_admin_emits_event() {
         })
         .expect("admin_transferred event not found");
 
-    let payload: AdminTransferredEvent =
-        AdminTransferredEvent::try_from_val(&env, &ev.2).unwrap();
+    let payload: AdminTransferredEvent = AdminTransferredEvent::try_from_val(&env, &ev.2).unwrap();
     assert_eq!(payload.previous_admin, admin);
     assert_eq!(payload.new_admin, new_admin);
 }
@@ -2062,7 +2073,7 @@ fn test_transfer_admin_emits_event() {
 // ─── pause_stream / resume_stream (#462) ─────────────────────────────────────
 
 #[test]
-fn test_pause_stops_accrual() {
+fn test_pause_stops_accrual_462() {
     let env = Env::default();
     env.mock_all_auths();
     let (token, _) = create_token(&env);
@@ -2212,11 +2223,11 @@ fn test_cancel_paused_stream_emits_correct_event() {
         })
         .expect("stream_cancelled event not found");
 
-    let payload: StreamCancelledEvent =
-        StreamCancelledEvent::try_from_val(&env, &ev.2).unwrap();
-    // 400 tokens accrued before pause; 0 previously withdrawn.
+    let payload: StreamCancelledEvent = StreamCancelledEvent::try_from_val(&env, &ev.2).unwrap();
+    // 400 tokens accrued before pause are settled to the recipient at cancel
+    // (counted in amount_withdrawn); the remaining 600 is refunded to sender.
     assert_eq!(payload.refunded_amount, 600);
-    assert_eq!(payload.amount_withdrawn, 0);
+    assert_eq!(payload.amount_withdrawn, 400);
 }
 
 #[test]
@@ -2310,5 +2321,5 @@ fn test_resume_stream_emits_event() {
     let payload: StreamResumedEvent = StreamResumedEvent::try_from_val(&env, &ev.2).unwrap();
     assert_eq!(payload.stream_id, id);
     assert_eq!(payload.sender, sender);
-    assert_eq!(payload.resumed_at, 150);
+    assert_eq!(payload.new_end_time, 1150);
 }
