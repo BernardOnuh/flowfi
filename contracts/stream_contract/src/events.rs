@@ -106,7 +106,6 @@ pub struct AdminTransferredEvent {
     pub new_admin: Address,
 }
 
-/// Emitted when a stream is paused.
 /// Emitted when a sender pauses an active stream.
 ///
 /// Topic: `("stream_paused", stream_id)`
