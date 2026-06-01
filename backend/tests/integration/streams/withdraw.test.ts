@@ -33,15 +33,19 @@ vi.mock('../../../src/services/sorobanService.js', () => ({
 }));
 
 // Simple factory — no importOriginal — reliable with pool:forks.
-vi.mock('../../../src/middleware/auth.js', () => ({
-  requireAuth: (req: any, _res: any, next: any) => {
-    req.user = { publicKey: currentUser.publicKey };
-    next();
-  },
-  requireAdmin: (_req: any, res: any, _next: any) => {
-    res.status(403).json({ error: 'Forbidden' });
-  },
-}));
+vi.mock('../../../src/middleware/auth.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/middleware/auth.js')>();
+  return {
+    ...actual,
+    requireAuth: (req: any, _res: any, next: any) => {
+      req.user = { publicKey: currentUser.publicKey };
+      next();
+    },
+    requireAdmin: (_req: any, res: any, _next: any) => {
+      res.status(403).json({ error: 'Forbidden' });
+    },
+  };
+});
 
 import app from '../../../src/app.js';
 
