@@ -204,13 +204,8 @@ export async function pauseStream(
     const { Address } = await import('@stellar/stellar-sdk');
 
     const senderAddr = new Address(senderAddress);
-<<<<<<< sorobanService_drop
 
     const retval = await simulateContractCall('pause_stream', [
-=======
-    
-    await simulateContractCall('pause_stream', [
->>>>>>> main
       senderAddr.toScVal(),
       nativeToScVal(streamId, { type: 'u64' }),
     ]);
@@ -243,13 +238,8 @@ export async function resumeStream(
     const { Address } = await import('@stellar/stellar-sdk');
 
     const senderAddr = new Address(senderAddress);
-<<<<<<< sorobanService_drop
 
     const retval = await simulateContractCall('resume_stream', [
-=======
-    
-    await simulateContractCall('resume_stream', [
->>>>>>> main
       senderAddr.toScVal(),
       nativeToScVal(streamId, { type: 'u64' }),
     ]);
