@@ -33,7 +33,8 @@ function decodeAddress(val: xdr.ScVal): string {
   if (addr.switch().value === xdr.ScAddressType.scAddressTypeAccount().value) {
     return StrKey.encodeEd25519PublicKey(addr.accountId().ed25519());
   }
-  return StrKey.encodeContract(Buffer.from(addr.contractId() as any));
+  const hash = addr.contractId();
+  return StrKey.encodeContract(Buffer.from(hash as unknown as Uint8Array));
 }
 
 function decodeMap(val: xdr.ScVal): Record<string, xdr.ScVal> {
@@ -203,7 +204,7 @@ export async function pauseStream(
 
   try {
     const { Address } = await import('@stellar/stellar-sdk');
-    
+
     const senderAddr = new Address(senderAddress);
     
     await simulateContractCall('pause_stream', [
@@ -237,7 +238,7 @@ export async function resumeStream(
 
   try {
     const { Address } = await import('@stellar/stellar-sdk');
-    
+
     const senderAddr = new Address(senderAddress);
     
     await simulateContractCall('resume_stream', [
