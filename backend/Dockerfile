@@ -23,6 +23,13 @@ RUN npm install --omit=dev
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/src/generated ./src/generated
 
+# Prisma 7 resolves the schema location and datasource url from prisma.config.ts,
+# and the schema itself lives under prisma/. The CI health-check runs
+# `prisma db push` inside this image, so both must be present in the runtime stage
+# (dotenv is a runtime dependency, so prisma.config.ts loads fine).
+COPY prisma ./prisma
+COPY prisma.config.ts ./
+
 EXPOSE 3001
 
 CMD ["npm", "start"]
